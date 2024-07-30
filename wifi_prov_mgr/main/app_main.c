@@ -6,9 +6,10 @@
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
    CONDITIONS OF ANY KIND, either express or implied.
 */
-
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+#include <stddef.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -17,20 +18,38 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <esp_event.h>
+#include <esp_netif.h>
 #include <nvs_flash.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 
 #include <wifi_provisioning/manager.h>
-
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
 #include <wifi_provisioning/scheme_ble.h>
 #endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */
-
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
 #include <wifi_provisioning/scheme_softap.h>
 #endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
+
+#include "mqtt_client.h"
+#include "driver/gpio.h"
+#include "rom/gpio.h"
+#include "adxl345.h"
+#include "hx711.h"
 #include "qrcode.h"
 
 static const char *TAG = "PROV_EA69FC";
+
+#define SCL_PIN GPIO_NUM_22
+#define SDA_PIN GPIO_NUM_21
+#define AVG_SAMPLES 10
+#define GPIO_DATA GPIO_NUM_19
+#define GPIO_SCLK GPIO_NUM_18
+
+static void weight_reading_task(void* arg);
+
+static esp_mqtt_client_handle_t client;
+
 
 #if CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2
 #if CONFIG_EXAMPLE_PROV_SEC2_DEV_MODE
@@ -278,6 +297,118 @@ static void wifi_prov_print_qr(const char *name, const char *username, const cha
     ESP_LOGI(TAG, "If QR code is not visible, copy paste the below URL in a browser.\n%s?data=%s", QRCODE_BASE_URL, payload);
 }
 
+
+
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+    esp_mqtt_event_handle_t event = event_data;
+    client = event->client;
+
+    switch ((esp_mqtt_event_id_t)event_id) {
+    case MQTT_EVENT_CONNECTED:
+        ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
+        break;
+    case MQTT_EVENT_DISCONNECTED:
+        ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
+        break;
+    case MQTT_EVENT_SUBSCRIBED:
+        ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_UNSUBSCRIBED:
+        ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_PUBLISHED:
+  //      ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
+        break;
+    case MQTT_EVENT_DATA:
+        ESP_LOGI(TAG, "MQTT_EVENT_DATA");
+        ESP_LOGI(TAG, "TOPIC=%.*s", event->topic_len, event->topic);
+        ESP_LOGI(TAG, "DATA=%.*s", event->data_len, event->data);
+        break;
+    case MQTT_EVENT_ERROR:
+        ESP_LOGE(TAG, "MQTT_EVENT_ERROR");
+        break;
+    default:
+        ESP_LOGI(TAG, "Other event id:%d", event->event_id);
+        break;
+    }
+}
+
+static void mqtt_app_start(void) {
+    esp_mqtt_client_config_t mqtt_cfg = {
+        .broker.address.uri = "mqtt://113.161.84.132:8883", // Địa chỉ broker MQTT, thay đổi nếu cần
+        .credentials.username ="iot",
+        .credentials.authentication.password="iot@123456"
+        
+    };
+
+    client = esp_mqtt_client_init(&mqtt_cfg);
+    esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_start(client);
+}
+
+
+
+static void weight_reading_task(void* arg);
+static void initialise_weight_sensor(void);
+
+
+static void weight_reading_task(void* arg)
+{
+    hx711_init(GPIO_DATA, GPIO_SCLK, eGAIN_128); 
+    hx711_tare();
+
+    unsigned long weight = 0;
+    char weight_str[20]; // Buffer để chứa chuỗi ký tự của trọng lượng
+
+    while (1)
+    {
+        weight = hx711_get_units(AVG_SAMPLES);
+        
+        // Chuyển đổi giá trị trọng lượng từ số nguyên sang chuỗi ký tự
+        sprintf(weight_str, "%ld", weight);
+
+        // Gửi giá trị trọng lượng dưới dạng chuỗi ký tự qua MQTT
+        esp_mqtt_client_publish(client, "/hx711/data", weight_str, 0, 1, 0);
+
+        // Đợi 1 giây trước khi đọc giá trị tiếp theo
+       // vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
+
+
+
+
+
+
+static void sensorTask_adxl345(void *pvParameters) {
+    ESP_LOGI(TAG, "Sensor task started");
+
+    initAcc(SCL_PIN, SDA_PIN);
+    ESP_LOGI(TAG, "Accelerometer started");
+
+    int acc[3];
+    char data[50];
+    while (1) {
+        getAccelerometerData(acc);
+        snprintf(data, sizeof(data), "{\"X\": %d, \"Y\": %d, \"Z\": %d}", (int8_t)acc[0], (int8_t)acc[1], (int8_t)acc[2]);
+
+        // Kiểm tra bộ nhớ trước khi gửi
+     //   ESP_LOGI(TAG, "Free heap size before publish: %lu bytes", (unsigned long)esp_get_free_heap_size());
+
+        // Gửi dữ liệu qua MQTT
+      //  int msg_id =
+         esp_mqtt_client_publish(client, "/adxl345/data", data, 0, 1, 0);
+   //     ESP_LOGI(TAG, "Publish message id: %d", msg_id);
+
+        // Đợi một khoảng thời gian trước khi gửi tin nhắn tiếp theo
+       // vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        // Kiểm tra bộ nhớ sau khi gửi
+     //   ESP_LOGI(TAG, "Free heap size after publish: %lu bytes", (unsigned long)esp_get_free_heap_size());
+    }
+}
+
 void app_main(void)
 {
     
@@ -513,10 +644,24 @@ void app_main(void)
         xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_EVENT, true, true, portMAX_DELAY);
     }
 #else
-     while (1) {
-         ESP_LOGI(TAG, "Hello World!");
-         vTaskDelay(1000 / portTICK_PERIOD_MS);
-     }
+    // while (1) {
+       //  ESP_LOGI(TAG, "Hello World!");
+       //  vTaskDelay(1000 / portTICK_PERIOD_MS);
+   
+        esp_log_level_set("*", ESP_LOG_INFO);
+    esp_log_level_set("mqtt_client", ESP_LOG_VERBOSE);
+    esp_log_level_set("mqtt_example", ESP_LOG_VERBOSE);
+    esp_log_level_set("transport_base", ESP_LOG_VERBOSE);
+    esp_log_level_set("esp-tls", ESP_LOG_VERBOSE);
+    esp_log_level_set("transport", ESP_LOG_VERBOSE);
+    esp_log_level_set("outbox", ESP_LOG_VERBOSE);
+
+         mqtt_app_start();
+   // xTaskCreate
+   
+     xTaskCreatePinnedToCore(weight_reading_task, "weight_reading_task", 2048, NULL, 1, NULL,0);
+     xTaskCreatePinnedToCore(&sensorTask_adxl345, "sensorTask", 4096, NULL, 4, NULL,1);
+    // }
 #endif
 
 }

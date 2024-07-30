@@ -422,3 +422,13 @@ if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   include("D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/main/cmake_install.cmake")
 endif()
 
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/adxl345/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/hx711/cmake_install.cmake")
+endif()
+

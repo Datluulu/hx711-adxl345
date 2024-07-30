@@ -64,3 +64,5 @@ D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/spiffs/libspiffs.
 D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/wifi_provisioning/libwifi_provisioning.a
 D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/espressif__qrcode/libespressif__qrcode.a
 D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/main/libmain.a
+D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/adxl345/libadxl345.a
+D:/Users/dathe/Desktop/esp-mdf-277/wifi_prov_mgr/build/esp-idf/hx711/libhx711.a
